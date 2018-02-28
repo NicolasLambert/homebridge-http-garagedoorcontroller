@@ -668,19 +668,20 @@ HttpGarageDoorControllerAccessory.prototype = {
 	},
 
 	_doorStateToState: function(doorState) {
-		switch (doorState.toUpperCase()) {
-			case "OPEN":
+		var maRegex = /{'STATE': (.), */g;
+		var value = maRegex.exec(doorState.toUpperCase())[1];
+		switch (value) {
+			case "3":
 				return DoorState.OPEN;
-			case "CLOSED":
+			case "6":
 				return DoorState.CLOSED;
-			case "OPENING":
+			case "1":
 				return DoorState.OPENING;
-			case "CLOSING":
+			case "4":
 				return DoorState.CLOSING;
-			case "UNKNOWN":
-			case "STOPPED":
-			case "STOPPED-OPENING":
-			case "STOPPED-CLOSING":
+			case "0":
+			case "2":
+			case "5":
 				return DoorState.STOPPED;
 			default:
 				return null;
