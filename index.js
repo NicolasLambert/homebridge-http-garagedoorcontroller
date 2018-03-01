@@ -348,7 +348,7 @@ HttpGarageDoorControllerAccessory.prototype = {
 
 		this._doorTargetState = DoorState.CLOSED;
 		this._doorCurrentState = DoorState.CLOSED;
-		this._setDoorCurrentState(this._doorCurrentState, true);
+		this._setDoorCurrentState(this._doorCurrentState, false, true);
 
 		if (this.lightName) {
 			this.garageLightService = new Service.Lightbulb(this.lightName);
@@ -380,14 +380,7 @@ HttpGarageDoorControllerAccessory.prototype = {
 
 	getDoorObstructionDetected: function(callback) {
 		this.log.debug("Entered getDoorObstructionDetected()");
-
-		var error = null;
-		if (this._hasStates() && ((Date.now() - this._doorCurrentStateSetAt) >= (this.httpStatusPollMilliseconds * 3))) {
-			error = new Error("The Garage Door current state is unknown (last known: " + this._doorStateToString(this._doorCurrentState) + "), it hasn't been reported since " + (new Date(this._doorCurrentStateSetAt)).toString());
-			this.log.error(error.message);
-		}
-
-		callback(error, this._doorObstructionDetected);
+		callback(null, this._doorObstructionDetected);
 	},
 
 	getDoorTargetState: function(callback) {
@@ -472,11 +465,11 @@ HttpGarageDoorControllerAccessory.prototype = {
 
 		if (this._hasDoorState()) {
 			checkStateMutex.lock(function() {
-				that._determineDoorState(function(error, doorState, lightState) {
+				that._determineDoorState(function(error, doorState, lightState, obstruction) {
 					if (error) {
 						that.log.error("ERROR in _checkStates() - " + error.message);
 					} else {
-						that._setDoorCurrentState(doorState, initial);
+						that._setDoorCurrentState(doorState, obstruction, initial);
 
 						if (lightState != null) {
 							that._setLightCurrentState(lightState, initial);
@@ -526,6 +519,7 @@ HttpGarageDoorControllerAccessory.prototype = {
 
 			var doorState = null;
 			var lightState = null;
+			var obstructionState = null;
 
 			if (that._isJsonApi()) {
 				doorState = that._doorStateToState(data[that.apiConfig.doorStateField]);
@@ -542,6 +536,7 @@ HttpGarageDoorControllerAccessory.prototype = {
 			} else {
 				data = data.toUpperCase().trim();
 				doorState = that._doorStateToState(data);
+				obstructionState = that._obstructionStateToState(data);
 
 				if (doorState == null) {
 					done(new Error("ERROR in _determineDoorState() - The HTTP response body was unexpected and could not be translated to a valid door state: " + data));
@@ -549,7 +544,7 @@ HttpGarageDoorControllerAccessory.prototype = {
 				}
 			}
 
-			done(null, doorState, lightState);
+			done(null, doorState, lightState, obstructionState);
 		});
 	},
 
@@ -581,9 +576,15 @@ HttpGarageDoorControllerAccessory.prototype = {
 		});
 	},
 
-	_setDoorCurrentState: function(state, initial, isFromTargetState) {
+	_setDoorCurrentState: function(state, obstruction, initial, isFromTargetState) {
 		this.log.debug("Entered _setDoorCurrentState(state: %s, initial: %s, isFromTargetState: %s)", this._doorStateToString(state), (initial || false), (isFromTargetState || false));
 		this._doorCurrentStateSetAt = Date.now();
+
+		if (obstruction !=null && this._doorObstructionDetected != obstruction) {
+			this._doorObstructionDetected = (obstruction == true);
+			this.log.debug("Change obstruction value: %s", this._doorObstructionDetected);
+			this.garageDoorObstructionDetected.setValue(this._doorObstructionDetected);
+		}
 
 		if ((this._doorCurrentState == state) && (!initial)) {
 			return;
@@ -593,9 +594,6 @@ HttpGarageDoorControllerAccessory.prototype = {
 
 		this._doorCurrentState = state;
 		this.garageDoorCurrentState.setValue(this._doorCurrentState);
-
-		this._doorObstructionDetected = (this._doorCurrentState == DoorState.STOPPED);
-		this.garageDoorObstructionDetected.setValue(this._doorObstructionDetected);
 
 		if (!isFromTargetState) {
 			if ((state == DoorState.OPEN) || (state == DoorState.OPENING)) {
@@ -621,9 +619,9 @@ HttpGarageDoorControllerAccessory.prototype = {
 
 		if (!isFromCurrentState) {
 			if (state == DoorState.OPEN) {
-				this._setDoorCurrentState(DoorState.OPENING, initial, true);
+				this._setDoorCurrentState(DoorState.OPENING, null, initial, true);
 			} else if (state == DoorState.CLOSED) {
-				this._setDoorCurrentState(DoorState.CLOSING, initial, true);
+				this._setDoorCurrentState(DoorState.CLOSING, null, initial, true);
 			}
 		}
 	},
@@ -686,6 +684,11 @@ HttpGarageDoorControllerAccessory.prototype = {
 			default:
 				return null;
 		}
+	},
+
+	_obstructionStateToState: function(doorState) {
+		var maRegex = /'OBSTACLE': (.*), 'FORGOTTENOPENED': /g;
+		return 'TRUE' == maRegex.exec(doorState.toUpperCase())[1];
 	},
 
 	_isJsonApi: function() {
